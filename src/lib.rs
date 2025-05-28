@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::{error, info, debug};
 
 use memflow::cglue;
 use memflow::connector::cpu_state::*;
@@ -31,15 +31,23 @@ impl<P: MemoryView + Process> QemuProcfs<P> {
     pub fn new<O: Os<IntoProcessType = P>>(
         mut os: O,
         map_override: Option<CTup2<Address, umem>>,
+        qemu_binary_name: Option<String>,
     ) -> Result<Self> {
         let mut proc = None;
 
         let callback = &mut |info: ProcessInfo| {
-            if proc.is_none() && is_qemu(&info) {
+            
+            let matches = qemu_binary_name
+                .as_ref()
+                .map(|nm| &*info.name == nm)
+                .unwrap_or_else(|| is_qemu(&info));
+            if proc.is_none() && matches {
+                debug!("Found QEMU process: {:#?}", info);
                 proc = Some(info);
             }
-
+            
             proc.is_none()
+            
         };
 
         os.process_info_list_callback(callback.into())?;
@@ -58,15 +66,21 @@ impl<P: MemoryView + Process> QemuProcfs<P> {
         mut os: O,
         name: &str,
         map_override: Option<CTup2<Address, umem>>,
+        qemu_binary_name: Option<String>,
     ) -> Result<Self> {
         let mut proc = None;
 
         let callback = &mut |info: ProcessInfo| {
+            let matches = qemu_binary_name
+                .as_ref()
+                .map(|nm| &*info.name == nm)
+                .unwrap_or_else(|| is_qemu(&info));
             if proc.is_none()
-                && is_qemu(&info)
+                && matches
                 && qemu_arg_opt(info.command_line.split_whitespace(), "-name", "guest").as_deref()
                     == Some(name)
             {
+                debug!("Found QEMU process with guest name '{}': {:#?}", name, info);
                 proc = Some(info);
             }
 
@@ -202,6 +216,7 @@ fn validator() -> ArgsValidator {
     ArgsValidator::new()
         .arg(ArgDescriptor::new("map_base").description("override of VM memory base"))
         .arg(ArgDescriptor::new("map_size").description("override of VM memory size"))
+        .arg(ArgDescriptor::new("qemu_binary_name").description("override default QEMU binary name"))
 }
 
 /// Creates a new Qemu Procfs instance.
@@ -262,15 +277,20 @@ pub fn create_connector_with_os<O: Os>(
                         .and_then(|size| umem::from_str_radix(size, 16).ok()),
                 )
                 .map(|(start, size)| CTup2(Address::from(start), size));
+            
+            let qemu_binary_name_override = args
+                    .get("qemu_binary_name")
+                    .map(|s| s.to_string());
+
 
             if let Some(name) = name.or_else(|| args.get("name")) {
                 if let Ok(pid) = Pid::from_str_radix(name, 10) {
                     QemuProcfs::with_pid(os, pid, map_override)
                 } else {
-                    QemuProcfs::with_guest_name(os, name, map_override)
+                    QemuProcfs::with_guest_name(os, name, map_override, qemu_binary_name_override)
                 }
             } else {
-                QemuProcfs::new(os, map_override)
+                QemuProcfs::new(os, map_override, qemu_binary_name_override)
             }
         }
         Err(err) => {

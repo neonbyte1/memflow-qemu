@@ -1,6 +1,6 @@
 pub fn is_qemu(process: &memflow::os::process::ProcessInfo) -> bool {
     let name = &*process.name;
-    name.contains("qemu-system-") || name == "QEMULauncher"
+    name.contains("qemu-system-") || name == "QEMULauncher" || name == "kvm"
 }
 
 pub fn qemu_arg_opt<'a>(
