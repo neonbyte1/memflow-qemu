@@ -1,4 +1,4 @@
-use log::{error, info, debug};
+use log::{debug, error, info};
 
 use memflow::cglue;
 use memflow::connector::cpu_state::*;
@@ -36,21 +36,20 @@ impl<P: MemoryView + Process> QemuProcfs<P> {
         let mut proc = None;
 
         let callback = &mut |info: ProcessInfo| {
-            
             let matches = qemu_binary_name
                 .as_ref()
                 .map(|nm| &*info.name == nm)
                 .unwrap_or_else(|| is_qemu(&info));
             if proc.is_none() && matches {
-                debug!("Found QEMU process: {:#?}", info);
                 proc = Some(info);
             }
-            
+
             proc.is_none()
-            
         };
 
         os.process_info_list_callback(callback.into())?;
+
+        debug!("reading qemu process: {:#?}", proc);
 
         Self::with_process(
             os,
@@ -80,7 +79,6 @@ impl<P: MemoryView + Process> QemuProcfs<P> {
                 && qemu_arg_opt(info.command_line.split_whitespace(), "-name", "guest").as_deref()
                     == Some(name)
             {
-                debug!("Found QEMU process with guest name '{}': {:#?}", name, info);
                 proc = Some(info);
             }
 
@@ -88,6 +86,8 @@ impl<P: MemoryView + Process> QemuProcfs<P> {
         };
 
         os.process_info_list_callback(callback.into())?;
+
+        debug!("reading qemu process: {:#?}", proc);
 
         Self::with_process(
             os,
@@ -216,7 +216,9 @@ fn validator() -> ArgsValidator {
     ArgsValidator::new()
         .arg(ArgDescriptor::new("map_base").description("override of VM memory base"))
         .arg(ArgDescriptor::new("map_size").description("override of VM memory size"))
-        .arg(ArgDescriptor::new("qemu_binary_name").description("override default QEMU binary name"))
+        .arg(
+            ArgDescriptor::new("qemu_binary_name").description("override default QEMU binary name"),
+        )
 }
 
 /// Creates a new Qemu Procfs instance.
@@ -277,11 +279,8 @@ pub fn create_connector_with_os<O: Os>(
                         .and_then(|size| umem::from_str_radix(size, 16).ok()),
                 )
                 .map(|(start, size)| CTup2(Address::from(start), size));
-            
-            let qemu_binary_name_override = args
-                    .get("qemu_binary_name")
-                    .map(|s| s.to_string());
 
+            let qemu_binary_name_override = args.get("qemu_binary_name").map(|s| s.to_string());
 
             if let Some(name) = name.or_else(|| args.get("name")) {
                 if let Ok(pid) = Pid::from_str_radix(name, 10) {
